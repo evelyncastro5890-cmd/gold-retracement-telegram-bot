@@ -1,0 +1,86 @@
+import os
+import pandas as pd
+import yfinance as yf
+import time
+import requests
+from datetime import datetime
+
+# === YOUR SETTINGS (from Render env vars) ===
+TELEGRAM_TOKEN = os.getenv('8362431126:AAF_OiKBbAjoKCv-5fTnWvGgAzeTtUh7UsQ')
+CHAT_ID = os.getenv('3544465')
+
+# Strategy settings
+LOOKBACK_BARS = int(os.getenv('LOOKBACK_BARS', '24'))
+THRESHOLD = float(os.getenv('THRESHOLD', '28.0'))
+TP1 = float(os.getenv('TP1', '10.0'))
+TP2 = float(os.getenv('TP2', '20.0'))
+STOP = float(os.getenv('STOP', '18.0'))
+
+sent_signals = set()
+
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("Missing TELEGRAM_TOKEN or CHAT_ID – check env vars!")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}
+    try:
+        requests.post(url, data=data)
+        print(f"{datetime.now()} → Alert sent!")
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+while True:
+    try:
+        df = yf.download("GC=F", period="5d", interval="1h", progress=False)
+        if len(df) < LOOKBACK_BARS + 5:
+            time.sleep(60)
+            continue
+            
+        close = df['Close']
+        move = close.iloc[-1] - close.iloc[-1 - LOOKBACK_BARS]
+        price_now = close.iloc[-1]
+        
+        signal_key = str(df.index[-1])
+        
+        if move <= -THRESHOLD and signal_key not in sent_signals:
+            entry = price_now
+            tp1 = entry + TP1
+            tp2 = entry + TP2
+            sl = entry - STOP
+            
+            msg = f"""<b>XAUUSD 1H RETRACEMENT LONG</b>
+Down <b>{abs(move):.1f}$</b> in last {LOOKBACK_BARS}h
+Entry now ≈ <b>{entry:.2f}</b>
+TP1 {tp1:.2f} <b>(+{TP1}$)</b>
+TP2 {tp2:.2f} <b>(+{TP2}$)</b>
+Stop {sl:.2f} <b>(-{STOP}$)</b>
+R:R = 1:1.1 → 1:2.2
+<a href="https://www.tradingview.com/chart/?symbol=XAUUSD">View Chart</a>"""
+            
+            send_telegram(msg)
+            sent_signals.add(signal_key)
+        
+        elif move >= THRESHOLD and signal_key not in sent_signals:
+            entry = price_now
+            tp1 = entry - TP1
+            tp2 = entry - TP2
+            sl = entry + STOP
+            
+            msg = f"""<b>XAUUSD 1H RETRACEMENT SHORT</b>
+Up <b>{move:.1f}$</b> in last {LOOKBACK_BARS}h
+Entry now ≈ <b>{entry:.2f}</b>
+TP1 {tp1:.2f} <b>(+{TP1}$)</b>
+TP2 {tp2:.2f} <b>(+{TP2}$)</b>
+Stop {sl:.2f} <b>(-{STOP}$)</b>
+R:R = 1:1.1 → 1:2.2
+<a href="https://www.tradingview.com/chart/?symbol=XAUUSD">View Chart</a>"""
+            
+            send_telegram(msg)
+            sent_signals.add(signal_key)
+        
+        time.sleep(55)  # Poll every ~1 min
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        time.sleep(60)
